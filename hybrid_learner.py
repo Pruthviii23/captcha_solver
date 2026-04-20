@@ -18,7 +18,7 @@ MAX_LEN = 6
 # LOAD CHAR CNN
 # ==========================
 
-char_cnn = tf.keras.models.load_model("char_cnn_v2.keras")
+char_cnn = tf.keras.models.load_model("char_cnn.keras")
 
 # ==========================
 # PREPROCESS
@@ -83,6 +83,7 @@ labels_padded = tf.keras.preprocessing.sequence.pad_sequences(
     encoded, maxlen=MAX_LEN, padding="post"
 )
 labels_padded = labels_padded.astype(np.int32)
+
 # ==========================
 # CTC LAYER
 # ==========================
@@ -181,9 +182,9 @@ model.fit(
 # ==========================
 
 prediction_model = tf.keras.Model(input_img, x)
-prediction_model.save("captcha_model_hybrid_v2.keras")
+prediction_model.save("captcha_model.keras")
 
-with open("char_vocab_hybrid_v1.json", "w") as f:
+with open("char_vocab.json", "w") as f:
     json.dump(characters, f)
 
 print("✅ Training complete")

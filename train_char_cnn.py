@@ -13,8 +13,6 @@ for f in os.listdir(DATASET_PATH):
 
     img = cv2.imread(os.path.join(DATASET_PATH, f), cv2.IMREAD_GRAYSCALE)
     img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-
-    # normalize
     img = img / 255.0
 
     images.append(img)
@@ -23,22 +21,18 @@ for f in os.listdir(DATASET_PATH):
 images = np.array(images).reshape(-1, IMG_SIZE, IMG_SIZE, 1)
 
 # vocab
-chars = sorted(list(set(labels)))
-char_to_num = {c:i for i,c in enumerate(chars)}
+characters = sorted(list(set(labels)))
+char_to_num = {c:i for i,c in enumerate(characters)}
 y = np.array([char_to_num[l] for l in labels])
 
-# split
 X_train, X_val, y_train, y_val = train_test_split(images, y, test_size=0.1, random_state=42)
 
-# augmentation
 datagen = tf.keras.preprocessing.image.ImageDataGenerator(
     rotation_range=5,
     width_shift_range=0.1,
-    height_shift_range=0.1,
-    zoom_range=0.1
+    height_shift_range=0.1
 )
 
-# model
 model = tf.keras.Sequential([
     layers.Input(shape=(IMG_SIZE, IMG_SIZE, 1)),
 
@@ -59,7 +53,7 @@ model = tf.keras.Sequential([
     layers.Dense(128, activation='relu'),
     layers.Dropout(0.4),
 
-    layers.Dense(len(chars), activation='softmax')
+    layers.Dense(len(characters), activation='softmax')
 ])
 
 model.compile(
@@ -80,9 +74,9 @@ model.fit(
     callbacks=cb
 )
 
-model.save("char_cnn_v1.keras")
+model.save("char_cnn.keras")
 
-with open("char_vocab_v1.json", "w") as f:
-    json.dump(chars, f)
+with open("char_vocab.json", "w") as f:
+    json.dump(characters, f)
 
-print("✅ Char CNN optimized")
+print("✅ Char CNN ready")
