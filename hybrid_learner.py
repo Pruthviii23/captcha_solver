@@ -5,10 +5,6 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers
 
-# ==========================
-# SETTINGS
-# ==========================
-
 DATASET_PATH = "dataset"
 IMG_WIDTH = 160
 IMG_HEIGHT = 75
@@ -42,7 +38,6 @@ def preprocess(img):
 images, labels = [], []
 
 for file in os.listdir(DATASET_PATH):
-
     if not file.endswith(".png"):
         continue
 
@@ -63,29 +58,46 @@ images = np.array(images).reshape(-1, IMG_HEIGHT, IMG_WIDTH, 1)
 print("Loaded:", len(images))
 
 # ==========================
-# CHAR SET
+# 🔥 FIXED VOCAB (SAVE ONCE)
 # ==========================
 
-characters = sorted(list(set("".join(labels))))
-num_classes = len(characters) + 1
+if os.path.exists("char_vocab.json"):
+    with open("char_vocab.json") as f:
+        characters = json.load(f)
+else:
+    characters = sorted(list(set("".join(labels))))
+    with open("char_vocab.json", "w") as f:
+        json.dump(characters, f)
 
-char_to_num = layers.StringLookup(vocabulary=characters, mask_token=None)
-num_to_char = layers.StringLookup(vocabulary=char_to_num.get_vocabulary(), invert=True)
+num_classes = len(characters) + 1  # CTC blank
+
+char_to_num = {c: i for i, c in enumerate(characters)}
+num_to_char = {i: c for i, c in enumerate(characters)}
+
+
+# ==========================
+# 🔥 FIXED ENCODING (NO -1)
+# ==========================
 
 def encode(label):
-    chars = tf.strings.unicode_split(label, input_encoding="UTF-8")
-    nums = char_to_num(chars) - 1
-    return nums
+    return [char_to_num[c] for c in label]
 
 encoded = [encode(l) for l in labels]
 
 labels_padded = tf.keras.preprocessing.sequence.pad_sequences(
-    encoded, maxlen=MAX_LEN, padding="post"
+    encoded,
+    maxlen=MAX_LEN,
+    padding="post",
+    value=0   # IMPORTANT
 )
+
 labels_padded = labels_padded.astype(np.int32)
 
+print("Max label:", np.max(labels_padded))
+print("Allowed max:", len(characters) - 1)
+
 # ==========================
-# CTC LAYER
+# 🔥 FIXED CTC LAYER
 # ==========================
 
 class CTCLayer(layers.Layer):
@@ -93,17 +105,18 @@ class CTCLayer(layers.Layer):
 
         batch_len = tf.shape(y_true)[0]
         input_len = tf.shape(y_pred)[1]
-        label_len = tf.shape(y_true)[1]
 
-        # 🔥 FIX: enforce int32 everywhere
-        input_len = tf.cast(input_len, dtype=tf.int32)
-        label_len = tf.cast(label_len, dtype=tf.int32)
-        batch_len = tf.cast(batch_len, dtype=tf.int32)
+        # 🔥 REAL label length (ignore padding)
+        label_len = tf.reduce_sum(
+            tf.cast(tf.not_equal(y_true, 0), tf.int32),
+            axis=1,
+            keepdims=True
+        )
+
+        input_len = tf.cast(input_len, tf.int32)
+        batch_len = tf.cast(batch_len, tf.int32)
 
         input_len = input_len * tf.ones((batch_len, 1), dtype=tf.int32)
-        label_len = label_len * tf.ones((batch_len, 1), dtype=tf.int32)
-
-        y_true = tf.cast(y_true, dtype=tf.int32)
 
         loss = tf.keras.backend.ctc_batch_cost(
             y_true, y_pred, input_len, label_len
@@ -113,57 +126,54 @@ class CTCLayer(layers.Layer):
         return y_pred
 
 # ==========================
-# MODEL
+# MODEL (UNCHANGED CORE)
 # ==========================
 
 input_img = layers.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 1), name="image")
 labels_input = layers.Input(shape=(MAX_LEN,), name="label")
 
-# 🔥 CNN (named layers — IMPORTANT)
 conv1 = layers.Conv2D(32, (3,3), padding="same", activation='relu', name="conv1")(input_img)
-pool1 = layers.MaxPooling2D((2,2), name="pool1")(conv1)
+pool1 = layers.MaxPooling2D((2,2))(conv1)
 
 conv2 = layers.Conv2D(64, (3,3), padding="same", activation='relu', name="conv2")(pool1)
-pool2 = layers.MaxPooling2D((2,2), name="pool2")(conv2)
+pool2 = layers.MaxPooling2D((2,2))(conv2)
 
 x = pool2
 
 # ==========================
-# SEQUENCE CONVERSION
+# SEQUENCE
 # ==========================
 
 x = layers.Permute((2,1,3))(x)
 x = layers.Reshape((IMG_WIDTH//4, -1))(x)
 
 x = layers.Dense(128, activation='relu')(x)
+x = layers.LayerNormalization()(x)
 x = layers.Dropout(0.3)(x)
 
-# BiLSTM
 x = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(x)
 x = layers.Bidirectional(layers.LSTM(64, return_sequences=True))(x)
 
-# Output
 x = layers.Dense(num_classes, activation="softmax")(x)
 
 output = CTCLayer()(labels_input, x)
 
 model = tf.keras.Model([input_img, labels_input], output)
-
 model.compile(optimizer="adam")
 
 model.summary()
 
+for i, layer in enumerate(char_cnn.layers):
+    print(i, layer.name, len(layer.get_weights()))
+
 # ==========================
 # 🔥 SAFE WEIGHT TRANSFER
 # ==========================
+# safer: find conv layers dynamically
+conv_layers = [l for l in char_cnn.layers if isinstance(l, tf.keras.layers.Conv2D)]
 
-# IMPORTANT: verify indices in your char_cnn
-print("\nChar CNN Summary:")
-char_cnn.summary()
-
-# transfer weights
-model.get_layer("conv1").set_weights(char_cnn.layers[0].get_weights())
-model.get_layer("conv2").set_weights(char_cnn.layers[2].get_weights())
+model.get_layer("conv1").set_weights(conv_layers[0].get_weights())
+model.get_layer("conv2").set_weights(conv_layers[1].get_weights())
 
 print("✅ Weights transferred")
 
@@ -173,6 +183,7 @@ print("✅ Weights transferred")
 
 model.fit(
     [images, labels_padded],
+    validation_split=0.1,   # IMPORTANT
     epochs=40,
     batch_size=32
 )
@@ -183,8 +194,5 @@ model.fit(
 
 prediction_model = tf.keras.Model(input_img, x)
 prediction_model.save("captcha_model.keras")
-
-with open("char_vocab.json", "w") as f:
-    json.dump(characters, f)
 
 print("✅ Training complete")
