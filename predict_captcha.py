@@ -45,8 +45,8 @@ def predict(path):
     pred = model.predict(img)
     return decode(pred)
 
-print("Pred:", predict("captcha_dataset/images/captcha_02011.png"))
-print("Pred:", predict("captcha_dataset/images/captcha_02012.png"))
-print("Pred:", predict("captcha_dataset/images/captcha_02013.png"))
-print("Pred:", predict("captcha_dataset/images/captcha_02014.png"))
-print("Pred:", predict("captcha_dataset/images/captcha_02015.png"))
+print("Pred:", predict("captcha_dataset/images/captcha_03051.png"))
+print("Pred:", predict("captcha_dataset/images/captcha_03052.png"))
+print("Pred:", predict("captcha_dataset/images/captcha_03053.png"))
+print("Pred:", predict("captcha_dataset/images/captcha_03054.png"))
+print("Pred:", predict("captcha_dataset/images/captcha_03055.png"))
