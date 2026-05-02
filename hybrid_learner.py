@@ -15,7 +15,7 @@ IMG_WIDTH = 160
 IMG_HEIGHT = 75
 MAX_LEN = 6
 BATCH_SIZE = 32
-EPOCHS = 80
+EPOCHS = 40
 
 # ==========================
 # LOAD DATA
@@ -34,17 +34,16 @@ for file in os.listdir(DATASET_PATH):
     if len(label) != MAX_LEN:
         continue
 
-    img = cv2.imread(os.path.join(DATASET_PATH, file))
+    path = os.path.join(DATASET_PATH, file)
+    img = cv2.imread(path)
 
     if img is None:
         continue
 
-    # OTSU
+    # 🔥 OTSU (NO BLUR)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5,5), 0)
-
     _, thresh = cv2.threshold(
-        blur, 0, 255,
+        gray, 0, 255,
         cv2.THRESH_BINARY + cv2.THRESH_OTSU
     )
 
@@ -60,7 +59,7 @@ images = np.expand_dims(images, axis=-1)
 print("Dataset:", images.shape)
 
 # ==========================
-# CHARSET
+# CHARACTER SET
 # ==========================
 
 characters = sorted(list(set("".join(labels))))
@@ -69,9 +68,14 @@ with open("char_vocab.json", "w") as f:
     json.dump(characters, f)
 
 char_to_num = {c:i for i,c in enumerate(characters)}
+num_to_char = {i+1:c for i,c in enumerate(characters)}  # shifted
+
+# ==========================
+# ENCODE LABELS (FIXED)
+# ==========================
 
 def encode(label):
-    return [char_to_num[c] for c in label]
+    return [char_to_num[c] + 1 for c in label]  # 🔥 SHIFT +1
 
 encoded = np.array([encode(l) for l in labels])
 
@@ -93,21 +97,14 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 # ==========================
-# 🔥 TF.DATA PIPELINE (CRITICAL FIX)
+# TF.DATA PIPELINE
 # ==========================
 
 def create_dataset(X, y):
-
-    dataset = tf.data.Dataset.from_tensor_slices((X, y))
-
-    dataset = dataset.map(
-        lambda x, y: ({"image": x, "label": y}),
-        num_parallel_calls=tf.data.AUTOTUNE
-    )
-
-    dataset = dataset.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
-
-    return dataset
+    ds = tf.data.Dataset.from_tensor_slices((X, y))
+    ds = ds.map(lambda x, y: ({"image": x, "label": y}))
+    ds = ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+    return ds
 
 train_ds = create_dataset(X_train, y_train)
 val_ds   = create_dataset(X_val, y_val)
@@ -134,7 +131,7 @@ class CTCLayer(layers.Layer):
         return y_pred
 
 # ==========================
-# MODEL
+# MODEL (FIXED ALIGNMENT)
 # ==========================
 
 input_img = layers.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 1), name="image")
@@ -142,25 +139,24 @@ labels_input = layers.Input(shape=(MAX_LEN,), name="label")
 
 # CNN
 x = layers.Conv2D(32, (3,3), activation="relu", padding="same")(input_img)
-x = layers.MaxPooling2D(2,2)(x)
+x = layers.MaxPooling2D((2,2))(x)
 
 x = layers.Conv2D(64, (3,3), activation="relu", padding="same")(x)
-x = layers.MaxPooling2D(2,2)(x)
+# ❌ NO second pooling
 
-# reshape
-x = layers.Permute((2,1,3))(x)
-x = layers.Reshape((IMG_WIDTH//2, -1))(x)
+# 🔥 WIDTH = TIME (CRITICAL FIX)
+shape = x.shape
+x = layers.Reshape((shape[2], shape[1]*shape[3]))(x)
 
 x = layers.Dense(128, activation="relu")(x)
-x = layers.LayerNormalization()(x)   # 🔥 ADD THIS
-x = layers.Dropout(0.3)(x)
+x = layers.LayerNormalization()(x)
 
 # RNN
 x = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(x)
 x = layers.Bidirectional(layers.LSTM(64, return_sequences=True))(x)
 
-# output
-num_classes = len(characters) + 1
+# OUTPUT
+num_classes = len(characters) + 2  # 🔥 FIXED
 x = layers.Dense(num_classes, activation="softmax")(x)
 
 output = CTCLayer()(labels_input, x)
@@ -179,8 +175,8 @@ model.summary()
 # ==========================
 
 callbacks = [
-    tf.keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True),
-    tf.keras.callbacks.ReduceLROnPlateau(patience=3)
+    tf.keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True),
+    tf.keras.callbacks.ReduceLROnPlateau(patience=2)
 ]
 
 model.fit(

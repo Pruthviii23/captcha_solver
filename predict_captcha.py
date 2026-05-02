@@ -7,7 +7,7 @@ IMG_WIDTH = 160
 IMG_HEIGHT = 75
 
 # ==========================
-# LOAD MODEL + VOCAB
+# LOAD
 # ==========================
 
 model = tf.keras.models.load_model("captcha_model.keras")
@@ -15,7 +15,7 @@ model = tf.keras.models.load_model("captcha_model.keras")
 with open("char_vocab.json", "r") as f:
     characters = json.load(f)
 
-num_to_char = {i:c for i,c in enumerate(characters)}
+num_to_char = {i+1:c for i,c in enumerate(characters)}
 
 # ==========================
 # PREPROCESS
@@ -25,20 +25,19 @@ def preprocess(path):
     img = cv2.imread(path)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5,5), 0)
 
     _, thresh = cv2.threshold(
-        blur, 0, 255,
+        gray, 0, 255,
         cv2.THRESH_BINARY + cv2.THRESH_OTSU
     )
 
     img = cv2.resize(thresh, (IMG_WIDTH, IMG_HEIGHT))
-    img = img / 255.0
+    img = img.astype(np.float32) / 255.0
 
     return img.reshape(1, IMG_HEIGHT, IMG_WIDTH, 1)
 
 # ==========================
-# DECODE (🔥 beam search)
+# DECODE
 # ==========================
 
 def decode(pred):
@@ -49,19 +48,17 @@ def decode(pred):
         pred,
         input_length=input_len,
         greedy=False,
-        beam_width=10   # 🔥 important
+        beam_width=10
     )[0][0]
 
-    results = []
-    for seq in decoded:
-        text = ""
-        for i in seq:
-            if i == -1:
-                continue
-            text += num_to_char[int(i)]
-        results.append(text)
+    text = ""
 
-    return results
+    for i in decoded[0]:
+        if i <= 0:
+            continue
+        text += num_to_char.get(int(i), "")
+
+    return text
 
 # ==========================
 # TEST
